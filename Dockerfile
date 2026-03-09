@@ -1,20 +1,22 @@
-# Use the official Playwright image that already has all system dependencies installed
-FROM mcr.microsoft.com/playwright/python:v1.42.0-jammy
+# Use a standard, lightweight Python image
+FROM python:3.10-slim
 
-# Set the working directory inside the container
 WORKDIR /app
 
-# Copy your requirements file first
+# Copy requirements first
 COPY requirements.txt .
 
-# Install your Python libraries
+# Install your Python packages (including the latest Playwright)
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of your bot's code into the container
+# Download the exact browser version that matches your installed Python package
+RUN playwright install chromium
+
+# Install the necessary system dependencies (this works here because Docker builds as root)
+RUN playwright install-deps
+
+# Copy your bot code
 COPY . .
 
-# Expose the port for your Flask server (for UptimeRobot)
-EXPOSE 8080
-
-# Command to run your bot
+# Start the bot
 CMD ["python", "bot.py"]
