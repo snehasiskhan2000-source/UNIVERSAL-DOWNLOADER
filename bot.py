@@ -5,6 +5,7 @@ from flask import Flask
 import telebot
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton
 from playwright.sync_api import sync_playwright
+from playwright_stealth import stealth_sync  # <--- NEW: Stealth import
 import yt_dlp
 
 # --- FLASK SERVER FOR UPTIMEROBOT ---
@@ -42,29 +43,47 @@ def handle_menu(message):
 @bot.message_handler(func=lambda message: message.text.startswith('http'))
 def process_link(message):
     url = message.text
-    status_msg = bot.reply_to(message, "🔍 Sniffing network resources... Please wait.")
+    status_msg = bot.reply_to(message, "⏳ Bypassing security and sniffing network... Please wait.")
     
     media_links = set()
 
     def handle_request(request):
-        # Sniffing for the specific formats seen in your Via Browser screenshot
+        # Sniffing for the specific formats
         if ".mp4" in request.url or ".m3u8" in request.url:
             media_links.add(request.url)
 
     # 1. Sniffing Phase
     try:
         with sync_playwright() as p:
-            # Important Render args to prevent crashing
-            browser = p.chromium.launch(headless=True, args=['--no-sandbox', '--disable-setuid-sandbox'])
+            # Added more args to ensure absolute stability on cloud hosts
+            browser = p.chromium.launch(
+                headless=True, 
+                args=[
+                    '--no-sandbox', 
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-accelerated-2d-canvas',
+                    '--disable-gpu'
+                ]
+            )
             page = browser.new_page()
+            
+            # --- NEW: Apply Stealth Mode ---
+            stealth_sync(page)
+            
             page.on("request", handle_request)
             
-            # Load page and wait for background scripts to fetch the media
-            page.goto(url, wait_until="networkidle", timeout=30000)
-            time.sleep(3) # Extra buffer for delayed streams
+            # --- FIXED TIMEOUT & WAIT CONDITION ---
+            # Changed from 'networkidle' (which times out if ads keep loading) to 'domcontentloaded'
+            # Increased timeout to 60 seconds (60000ms)
+            page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            
+            # Give background scripts a few seconds to trigger the media requests after DOM is ready
+            time.sleep(5) 
             browser.close()
+            
     except Exception as e:
-        bot.edit_message_text(f"❌ Failed to load page: {str(e)[:50]}", chat_id=message.chat.id, message_id=status_msg.message_id)
+        bot.edit_message_text(f"❌ Failed to load page: {str(e)[:100]}", chat_id=message.chat.id, message_id=status_msg.message_id)
         return
 
     if not media_links:
@@ -74,7 +93,7 @@ def process_link(message):
     bot.edit_message_text(f"✅ Found {len(media_links)} streaming link(s). Starting downloads...", chat_id=message.chat.id, message_id=status_msg.message_id)
 
     # 2. Downloading & Sending Phase
-    for link in list(media_links)[:3]: # Limiting to 3 to prevent Render timeouts/memory crashes
+    for link in list(media_links)[:3]:
         bot.send_message(message.chat.id, "📥 Processing stream...")
         download_and_send(link, message.chat.id)
 
@@ -90,7 +109,6 @@ def download_and_send(media_url, chat_id):
             info = ydl.extract_info(media_url, download=True)
             filename = ydl.prepare_filename(info)
         
-        # Telegram Bot API standard file size limit is 50MB
         file_size_mb = os.path.getsize(filename) / (1024 * 1024)
         
         if file_size_mb > 50:
@@ -99,16 +117,13 @@ def download_and_send(media_url, chat_id):
             with open(filename, 'rb') as video_file:
                 bot.send_video(chat_id, video_file)
         
-        # Crucial for Render: Delete file after sending so your disk doesn't fill up
         os.remove(filename)
         
     except Exception as e:
         bot.send_message(chat_id, f"❌ Download failed for a link.")
-        if os.path.exists('video_*'): # Cleanup on failure
+        if os.path.exists('video_*'): 
              os.system('rm video_*')
 
 if __name__ == "__main__":
-    # Start Flask server in the background for UptimeRobot
     threading.Thread(target=run_server).start()
-    # Start Telegram Bot
     bot.infinity_polling()
