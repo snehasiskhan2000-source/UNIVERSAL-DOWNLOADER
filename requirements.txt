@@ -2,4 +2,4 @@ pyTelegramBotAPI
 Flask
 playwright
 yt-dlp
-playwright-stealth
+tf-playwright-stealth
